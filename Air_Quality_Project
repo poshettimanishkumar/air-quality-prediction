@@ -1,4 +1,0 @@
-import os
-
-print("Files in this folder:")
-print(os.listdir())
