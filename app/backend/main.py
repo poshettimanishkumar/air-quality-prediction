@@ -1,13 +1,13 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
-
 import pandas as pd
 import joblib
 
 
 # ============================================================
-# 1. FASTAPI APPLICATION
+# FASTAPI APPLICATION
 # ============================================================
 
 app = FastAPI(
@@ -18,7 +18,20 @@ app = FastAPI(
 
 
 # ============================================================
-# 2. MODEL PATH
+# CORS CONFIGURATION
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================
+# MODEL PATH
 # ============================================================
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -32,7 +45,7 @@ MODEL_PATH = (
 
 
 # ============================================================
-# 3. LOAD MODEL
+# LOAD MODEL
 # ============================================================
 
 model = None
@@ -44,11 +57,15 @@ print("========================================")
 print("Model path:")
 print(MODEL_PATH)
 
-try:
+print("Model exists:")
+print(MODEL_PATH.exists())
 
+
+try:
     model = joblib.load(MODEL_PATH)
 
     print("\nMODEL LOADED SUCCESSFULLY")
+    print("Model type:", type(model).__name__)
 
 except Exception as e:
 
@@ -57,7 +74,7 @@ except Exception as e:
 
 
 # ============================================================
-# 4. INPUT DATA MODEL
+# INPUT SCHEMA
 # ============================================================
 
 class AirQualityInput(BaseModel):
@@ -76,7 +93,7 @@ class AirQualityInput(BaseModel):
 
 
 # ============================================================
-# 5. HOME ENDPOINT
+# ROOT ENDPOINT
 # ============================================================
 
 @app.get("/")
@@ -84,12 +101,13 @@ def home():
 
     return {
         "message": "Air Quality Prediction API is running",
-        "status": "success"
+        "status": "success",
+        "model_loaded": model is not None
     }
 
 
 # ============================================================
-# 6. HEALTH ENDPOINT
+# HEALTH ENDPOINT
 # ============================================================
 
 @app.get("/health")
@@ -109,11 +127,15 @@ def health():
 
 
 # ============================================================
-# 7. PREDICTION ENDPOINT
+# PREDICTION ENDPOINT
 # ============================================================
 
 @app.post("/predict")
 def predict(data: AirQualityInput):
+
+    # --------------------------------------------------------
+    # Check model
+    # --------------------------------------------------------
 
     if model is None:
 
@@ -124,24 +146,24 @@ def predict(data: AirQualityInput):
 
 
     # --------------------------------------------------------
-    # Create input dataframe
+    # Create input DataFrame
     # --------------------------------------------------------
 
-    input_data = pd.DataFrame([{
+    input_data = pd.DataFrame([
+        {
+            "country": data.country,
+            "state": data.state,
+            "city": data.city,
+            "station": data.station,
 
-        "country": data.country,
-        "state": data.state,
-        "city": data.city,
-        "station": data.station,
+            "latitude": data.latitude,
+            "longitude": data.longitude,
 
-        "latitude": data.latitude,
-        "longitude": data.longitude,
+            "pollutant_id": data.pollutant_id,
 
-        "pollutant_id": data.pollutant_id,
-
-        "last_update": data.last_update
-
-    }])
+            "last_update": data.last_update
+        }
+    ])
 
 
     # --------------------------------------------------------
@@ -155,16 +177,36 @@ def predict(data: AirQualityInput):
 
 
     # --------------------------------------------------------
-    # Create same date features used during training
+    # Validate date
     # --------------------------------------------------------
 
-    input_data["year"] = input_data["last_update"].dt.year
+    if input_data["last_update"].isna().any():
 
-    input_data["month"] = input_data["last_update"].dt.month
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid last_update date format"
+        )
 
-    input_data["day"] = input_data["last_update"].dt.day
 
-    input_data["hour"] = input_data["last_update"].dt.hour
+    # --------------------------------------------------------
+    # Create date features
+    # --------------------------------------------------------
+
+    input_data["year"] = (
+        input_data["last_update"].dt.year
+    )
+
+    input_data["month"] = (
+        input_data["last_update"].dt.month
+    )
+
+    input_data["day"] = (
+        input_data["last_update"].dt.day
+    )
+
+    input_data["hour"] = (
+        input_data["last_update"].dt.hour
+    )
 
     input_data["day_of_week"] = (
         input_data["last_update"].dt.dayofweek
@@ -198,7 +240,7 @@ def predict(data: AirQualityInput):
 
 
     # --------------------------------------------------------
-    # Return result
+    # Return prediction
     # --------------------------------------------------------
 
     return {
@@ -213,12 +255,11 @@ def predict(data: AirQualityInput):
         "target": "pollutant_avg",
 
         "model": "XGBoost"
-
     }
 
 
 # ============================================================
-# 8. TEST ENDPOINT
+# TEST ENDPOINT
 # ============================================================
 
 @app.post("/predict-test")
@@ -236,8 +277,13 @@ def predict_test(data: AirQualityInput):
 
         "station": data.station,
 
+        "latitude": data.latitude,
+
+        "longitude": data.longitude,
+
         "pollutant_id": data.pollutant_id,
 
-        "status": "valid"
+        "last_update": data.last_update,
 
+        "status": "valid"
     }
